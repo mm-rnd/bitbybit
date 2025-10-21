@@ -2,13 +2,21 @@ import initOpenCascade, { OpenCascadeInstance } from "../../bitbybit-dev-occt/bi
 import { OccHelper } from "../occ-helper";
 import { VectorHelperService } from "../api/vector-helper.service";
 import { ShapesHelperService } from "../api/shapes-helper.service";
-import { OCCTSolid } from "./shapes";
+import { OCCTEdge, OCCTSolid, OCCTWire } from "./shapes";
 import { OCCTIO } from "./io";
+import { OCCTFillets } from "./fillets";
+import { OCCTOperations } from "./operations";
+import { OCCTTransforms } from "./transforms";
 
 describe("OCCT io unit tests", () => {
     let occt: OpenCascadeInstance;
     let io: OCCTIO;
     let solid: OCCTSolid;
+    let wire: OCCTWire;
+    let edge: OCCTEdge;
+    let fillets: OCCTFillets;
+    let operations: OCCTOperations;
+    let transforms: OCCTTransforms;
     let occHelper: OccHelper;
 
     beforeAll(async () => {
@@ -18,6 +26,12 @@ describe("OCCT io unit tests", () => {
 
         occHelper = new OccHelper(vec, s, occt);
         solid = new OCCTSolid(occt, occHelper);
+        wire = new OCCTWire(occt, occHelper);
+        edge = new OCCTEdge(occt, occHelper);
+        fillets = new OCCTFillets(occt, occHelper);
+        operations = new OCCTOperations(occt, occHelper);
+        transforms = new OCCTTransforms(occt, occHelper);
+
         io = new OCCTIO(occt, occHelper);
     });
 
@@ -59,6 +73,47 @@ describe("OCCT io unit tests", () => {
             ex
         );
         cone.delete();
+    });
+
+    it("should save shape as step file - failing shape", () => {
+        const curveA = edge.arcThroughThreePoints({
+            start: [48.908315006047225, 0, 590.1837554205451],
+            middle: [72.53035826112134, 0, 581.073372747166],
+            end: [97.8156950427375, 0, 579.7881708796572],
+        });
+        const curveB = edge.arcThroughThreePoints({
+            start: [126.09168499395278, 0, 712.8162445794549],
+            middle: [102.46964173887866, 0, 721.926627252834],
+            end: [77.1843049572625, 0, 723.2118291203428],
+        });
+        const lineA = wire.createLineWire({
+            start: edge.endPointOnEdge({ shape: curveA }),
+            end: edge.startPointOnEdge({ shape: curveB }),
+        });
+        const lineB = wire.createLineWire({
+            start: edge.endPointOnEdge({ shape: curveB }),
+            end: edge.startPointOnEdge({ shape: curveA }),
+        });
+        const combined = wire.combineEdgesAndWiresIntoAWire({ shapes: [curveA, lineA, curveB, lineB] });
+        const filleted = fillets.fillet2d({shape: combined, radius: 4});
+        const offseted = operations.offset({shape: filleted, distance: 1, tolerance: 1e-7});
+        const lofted = operations.extrude({
+            shape: offseted,
+            direction: [0, 1, 0],
+        });
+
+        const filleted2 = transforms.translate({shape: offseted, translation: [0, -10, 0]});
+        const aSolid = operations.loft({shapes: [filleted2, filleted], makeSolid: true});
+
+        let worked = true;
+        let step = '';
+        try {
+            step = io.saveShapeSTEP({ shape: aSolid, adjustYtoZ: true, fileName: "complex.step" });
+        } catch (e) {
+            worked = false;
+        }
+        expect(worked).toBeTruthy();
+        expect(step).toHaveLength(43541);
     });
 
     it("should load cube shape from step file", () => {
